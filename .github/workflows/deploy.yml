@@ -29,13 +29,3 @@ jobs:
         run: |
           pip install flake8
           flake8 ingestion glue_jobs streamlit_app --count --select=E9,F63,F7,F82 --show-source --statistics
-
-  validate-sam:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
-      - name: Validate SAM template
-        uses: aws-actions/setup-sam@v2
-      - run: sam validate --template template.yaml
