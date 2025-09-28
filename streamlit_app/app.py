@@ -1,33 +1,19 @@
+# streamlit_app/app.py
+
 import os
 from datetime import date, timedelta
 from typing import List, Optional
 
 import pandas as pd
 import streamlit as st
-import boto3
 from pyathena import connect
 
 # ================================
-# Page config (first line in app)
+# Page config
 # ================================
 st.set_page_config(page_title="Wistia Video Analytics — Gold KPIs", layout="wide")
 st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
-
-# ================================
-# Secrets / config
-# ================================
-aws = st.secrets["aws"]
-ath = st.secrets["athena"]
-
-REGION = aws["region"]
-DB = ath["database"]
-S3_STAGING = ath["s3_staging_dir"]
-WORKGROUP = ath.get("workgroup", "primary")
-
-if not (REGION and DB and S3_STAGING):
-    st.error("❌ Missing Athena config. Check `[aws]` and `[athena]` in `.streamlit/secrets.toml`.")
-    st.stop()
 
 # ================================
 # Athena connection + query helper
@@ -35,12 +21,12 @@ if not (REGION and DB and S3_STAGING):
 @st.cache_resource(show_spinner=False)
 def _conn():
     return connect(
-        s3_staging_dir=S3_STAGING,
-        region_name=REGION,
-        schema_name=DB,
-        work_group=WORKGROUP,
-        aws_access_key_id=aws["access_key_id"],
-        aws_secret_access_key=aws["secret_access_key"],
+        s3_staging_dir=st.secrets["ATHENA_S3_STAGING"],
+        region_name=st.secrets["AWS_REGION"],
+        schema_name=st.secrets["ATHENA_DATABASE"],
+        work_group=st.secrets["ATHENA_WORKGROUP"],
+        aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"],
     )
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -48,7 +34,7 @@ def run_sql(sql: str) -> pd.DataFrame:
     with _conn() as c:
         return pd.read_sql(sql, c)
 
-# ---------------- helpers: SQL fragments (no f-string backslash pitfalls) -------------
+# ---------------- helpers: SQL fragments ----------------
 def sql_date_literal(d: date) -> str:
     return "DATE '" + d.isoformat() + "'"
 
@@ -71,7 +57,7 @@ def where_clause_for_dates_only(start: date, end: date) -> str:
     return f"WHERE d BETWEEN {sql_date_literal(start)} AND {sql_date_literal(end)}"
 
 # ================================
-# Sidebar filters (Date range + Media)
+# Sidebar filters
 # ================================
 with st.sidebar:
     st.header("🔧 Filters")
@@ -111,9 +97,9 @@ with st.sidebar:
         placeholder="Choose one or more media_id values"
     )
 
-# =====================================================================================
+# ================================
 # Queries
-# =====================================================================================
+# ================================
 summary_sql = f"""
 SELECT
     SUM(plays) AS total_plays,
