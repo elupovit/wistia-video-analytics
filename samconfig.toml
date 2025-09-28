@@ -1,0 +1,12 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "wistia-video-analytics"
+resolve_s3 = true
+s3_prefix = "wistia-video-analytics"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+disable_rollback = true
+parameter_overrides = "DataBucketName=\"wistia-video-analytics\" SecretName=\"wistia/api_token\" BronzeBase=\"s3://wistia-video-analytics/bronze/wistia\" SilverBase=\"s3://wistia-video-analytics/silver\" GoldBase=\"s3://wistia-video-analytics/gold\""
+image_repositories = []
+confirm_changeset = true

@@ -1,0 +1,7 @@
+streamlit
+awswrangler
+boto3
+pandas
+pyarrow
+altair
+pyathena

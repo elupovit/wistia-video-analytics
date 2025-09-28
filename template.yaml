@@ -1,0 +1,156 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Wistia Video Analytics - Lambda + Glue (retain Glue jobs across stack deletes)
+
+Parameters:
+  DataBucketName:
+    Type: String
+    Default: wistia-video-analytics
+  SecretName:
+    Type: String
+    Default: wistia/api_token
+  BronzeBase:
+    Type: String
+    Default: s3://wistia-video-analytics/bronze/wistia
+    Description: Base S3 path for Bronze data
+  SilverBase:
+    Type: String
+    Default: s3://wistia-video-analytics/silver
+    Description: Base S3 path for Silver data
+  GoldBase:
+    Type: String
+    Default: s3://wistia-video-analytics/gold
+    Description: Base S3 path for Gold data
+
+Globals:
+  Function:
+    Timeout: 300
+    Runtime: python3.9
+    MemorySize: 256
+
+Resources:
+  IngestLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: wistia-ingest-skeleton
+      CodeUri: ingestion/
+      Handler: lambda_function.handler
+      Environment:
+        Variables:
+          DATA_BUCKET: "wistia-video-analytics"
+          SECRET_NAME: "wistia/api_token"
+          MEDIA_IDS: "gskhw4w4lm,v08dlrgr7v"
+          START_DATE: "2025-09-20"
+          END_DATE: "2025-10-01"
+          OVERWRITE_DAY: "true"
+          MAX_VISITOR_PAGES: "50"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3WritePolicy:
+            BucketName: !Ref DataBucketName
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub arn:aws:s3:::${DataBucketName}
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub arn:aws:s3:::${DataBucketName}/*
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}*
+
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: GlueS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${DataBucketName}
+                  - !Sub arn:aws:s3:::${DataBucketName}/*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub arn:aws:s3:::${DataBucketName}/silver/*
+
+  BronzeToSilverJob:
+    Type: AWS::Glue::Job
+    DeletionPolicy: Retais
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: bronze-to-silver-job
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub s3://${DataBucketName}/scripts/bronze_to_silver_glue.py
+        PythonVersion: "3"
+      DefaultArguments:
+        "--TempDir": !Sub s3://${DataBucketName}/tmp/
+        "--job-language": python
+        "--BRONZE_BASE": !Ref BronzeBase
+        "--SILVER_BASE": !Ref SilverBase
+      GlueVersion: "4.0"
+      MaxRetries: 0
+      Timeout: 2880
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+
+  SilverToGoldJob:
+    Type: AWS::Glue::Job
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: silver-to-gold-job
+      Role: !GetAtt GlueJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub s3://${DataBucketName}/scripts/silver_to_gold_v2.py
+        PythonVersion: "3"
+      DefaultArguments:
+        "--TempDir": !Sub s3://${DataBucketName}/tmp/
+        "--job-language": python
+        "--SILVER_BASE": !Ref SilverBase
+        "--GOLD_BASE": !Ref GoldBase
+      GlueVersion: "4.0"
+      MaxRetries: 0
+      Timeout: 2880
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+
+Outputs:
+  IngestLambdaName:
+    Description: Lambda function name
+    Value: !Ref IngestLambda
+  GlueJobRoleArn:
+    Description: IAM Role ARN for Glue jobs
+    Value: !GetAtt GlueJobRole.Arn
+  BronzeToSilverJobName:
+    Description: Glue Job Name for Bronze → Silver
+    Value: !Ref BronzeToSilverJob
+  SilverToGoldJobName:
+    Description: Glue Job Name for Silver → Gold
+    Value: !Ref SilverToGoldJob
