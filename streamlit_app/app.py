@@ -1,5 +1,3 @@
-# streamlit_app/app.py
-
 import os
 from datetime import date, timedelta
 from typing import List, Optional
@@ -19,31 +17,16 @@ st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold*
 # ================================
 # Secrets / config
 # ================================
-def _get_secret(*names: str, default: Optional[str] = None) -> Optional[str]:
-    # 1) Top-level keys
-    for n in names:
-        if n in st.secrets:
-            return st.secrets[n]
-    # 2) [default] section (if present)
-    if "default" in st.secrets:
-        for n in names:
-            if n in st.secrets["default"]:
-                return st.secrets["default"][n]
-    # 3) environment
-    for n in names:
-        v = os.getenv(n)
-        if v:
-            return v
-    return default
+aws = st.secrets["aws"]
+ath = st.secrets["athena"]
 
-REGION     = _get_secret("ATHENA_REGION", "AWS_REGION", default="us-east-1")
-DB         = _get_secret("ATHENA_DATABASE", default="wistia-analytics-gold")
-S3_STAGING = _get_secret("ATHENA_S3_STAGING", "ATHENA_S3_OUTPUT")
-WORKGROUP  = _get_secret("ATHENA_WORKGROUP", default="primary")
-AWS_PROFILE = os.getenv("AWS_PROFILE", "wistia-dev")  # your local profile
+REGION = aws["region"]
+DB = ath["database"]
+S3_STAGING = ath["s3_staging_dir"]
+WORKGROUP = ath.get("workgroup", "primary")
 
 if not (REGION and DB and S3_STAGING):
-    st.error("❌ Missing Athena config. Set `ATHENA_REGION`, `ATHENA_DATABASE`, `ATHENA_S3_STAGING` in `.streamlit/secrets.toml`.")
+    st.error("❌ Missing Athena config. Check `[aws]` and `[athena]` in `.streamlit/secrets.toml`.")
     st.stop()
 
 # ================================
@@ -51,17 +34,13 @@ if not (REGION and DB and S3_STAGING):
 # ================================
 @st.cache_resource(show_spinner=False)
 def _conn():
-    # use your local profile to mirror CLI behavior
-    session = boto3.Session(profile_name=AWS_PROFILE, region_name=REGION)
-    creds = session.get_credentials().get_frozen_credentials()
     return connect(
         s3_staging_dir=S3_STAGING,
         region_name=REGION,
         schema_name=DB,
-        work_group=WORKGROUP if WORKGROUP else None,
-        aws_access_key_id=creds.access_key,
-        aws_secret_access_key=creds.secret_key,
-        aws_session_token=creds.token,
+        work_group=WORKGROUP,
+        aws_access_key_id=aws["access_key_id"],
+        aws_secret_access_key=aws["secret_access_key"],
     )
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -71,11 +50,9 @@ def run_sql(sql: str) -> pd.DataFrame:
 
 # ---------------- helpers: SQL fragments (no f-string backslash pitfalls) -------------
 def sql_date_literal(d: date) -> str:
-    # Athena/Presto date literal
     return "DATE '" + d.isoformat() + "'"
 
 def sql_list(values: List[str]) -> str:
-    # Safe quote each with single quotes; escape single quotes for SQL
     quoted = []
     for v in values:
         if v is None:
@@ -102,7 +79,6 @@ with st.sidebar:
     today = date.today()
     default_start = today - timedelta(days=30)
 
-    # Date range
     dr = st.date_input(
         label="Date Range",
         value=(default_start, today),
@@ -111,17 +87,14 @@ with st.sidebar:
         help="Filters use the `d` column in the daily trend views."
     )
 
-    # Normalize tuple
     if isinstance(dr, (list, tuple)) and len(dr) == 2:
         start_date, end_date = dr
     else:
         start_date, end_date = default_start, today
 
-    # Limit guard
     if start_date > end_date:
         start_date, end_date = end_date, end_date
 
-    # Media options (distinct in date window)
     media_opt_sql = f"""
         SELECT DISTINCT media_id
         FROM gold_media_daily_trend_30d
@@ -134,15 +107,13 @@ with st.sidebar:
     selected_media = st.multiselect(
         "Select Media (media_id)",
         options=media_options,
-        default=media_options,  # default to all
+        default=media_options,
         placeholder="Choose one or more media_id values"
     )
 
 # =====================================================================================
-# Queries (apply date+media where possible; date-only where media_id is absent)
+# Queries
 # =====================================================================================
-
-# ---- Executive Summary (plays/loads from media trend; unique visitors+interactions from visitor trend) ----
 summary_sql = f"""
 SELECT
     SUM(plays) AS total_plays,
@@ -163,7 +134,6 @@ FROM gold_visitor_daily_trend_30d
 """
 vis_df = run_sql(visitors_sql)
 
-# ---- Media leaderboard (aggregate from daily trend) ----
 media_leader_sql = f"""
 SELECT
     media_id,
@@ -178,7 +148,6 @@ ORDER BY plays DESC
 """
 media_kpis = run_sql(media_leader_sql)
 
-# ---- Top visitors (date-only; media_id not present in this view) ----
 top_visitors_sql = f"""
 SELECT
     COALESCE(visitor_email, 'Unknown') AS visitor_email,
@@ -192,7 +161,6 @@ LIMIT 10
 """
 visitor_kpis = run_sql(top_visitors_sql)
 
-# ---- Trends (media + date, and visitors + date) ----
 media_trend_sql = f"""
 SELECT
     d,
