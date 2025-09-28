@@ -22,3 +22,4 @@ env/
 # Streamlit cache
 .streamlit/
 mock_data/
+mock_data/
