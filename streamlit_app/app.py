@@ -18,9 +18,9 @@ st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold*
 # ==============================
 # Secrets from Streamlit Cloud
 # ==============================
-AWS_KEY    = st.secrets["default"]["aws_access_key_id"]
-AWS_SECRET = st.secrets["default"]["aws_secret_access_key"]
-REGION     = st.secrets["default"]["region_name"]
+AWS_KEY    = st.secrets["aws"]["aws_access_key_id"]
+AWS_SECRET = st.secrets["aws"]["aws_secret_access_key"]
+REGION     = st.secrets["aws"]["region"]
 
 DB         = st.secrets["athena"]["database"]
 WORKGROUP  = st.secrets["athena"]["workgroup"]
@@ -42,7 +42,6 @@ def get_engine():
         f"@athena.{REGION}.amazonaws.com:443/{DB}"
         f"?s3_staging_dir={_s3_enc}&work_group={_wg_enc}"
     )
-    # poll_interval speeds up status polling
     return create_engine(conn_str, connect_args={"poll_interval": 1})
 
 @st.cache_data(ttl=180, show_spinner=False)
