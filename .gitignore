@@ -23,3 +23,6 @@ env/
 .streamlit/
 mock_data/
 mock_data/
+
+# Streamlit local secrets (never commit!)
+.streamlit/secrets.toml

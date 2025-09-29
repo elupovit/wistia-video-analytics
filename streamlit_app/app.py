@@ -1,5 +1,3 @@
-# streamlit_app/app.py
-
 from datetime import date, timedelta
 from typing import List, Optional
 import pandas as pd
@@ -48,29 +46,23 @@ def run_sql(sql: str) -> pd.DataFrame:
         return pd.read_sql(sql, conn)
 
 # ==============================
-# 🔍 Triple validation (stop early if broken)
+# Validate connection
 # ==============================
 try:
     _ = run_sql("SELECT 1")
-    st.sidebar.success("✅ Basic Athena connectivity works.")
+    st.sidebar.success("✅ Connected to Athena successfully.")
 except Exception as e:
-    st.sidebar.error(f"❌ Failed SELECT 1: {e}")
+    st.sidebar.error(f"❌ Athena connection failed: {e}")
     st.stop()
 
+# ==============================
+# Debug check (remove later)
+# ==============================
 try:
-    tables_df = run_sql("SHOW TABLES")
-    st.sidebar.success(f"✅ Tables found: {len(tables_df)}")
-    st.sidebar.write(tables_df.head())
+    debug_df = run_sql("SELECT COUNT(*) AS rowcount FROM gold_media_daily_trend_30d")
+    st.sidebar.info(f"🔍 gold_media_daily_trend_30d rowcount: {debug_df.iloc[0]['rowcount']}")
 except Exception as e:
-    st.sidebar.error(f"❌ SHOW TABLES failed: {e}")
-    st.stop()
-
-try:
-    rowcount_df = run_sql("SELECT COUNT(*) AS n FROM gold_media_daily_trend_30d")
-    st.sidebar.success(f"✅ gold_media_daily_trend_30d rows: {rowcount_df.iloc[0]['n']}")
-except Exception as e:
-    st.sidebar.error(f"❌ Rowcount query failed: {e}")
-    st.stop()
+    st.sidebar.error(f"❌ Debug query failed: {e}")
 
 # ==============================
 # SQL helpers
