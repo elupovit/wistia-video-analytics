@@ -48,23 +48,29 @@ def run_sql(sql: str) -> pd.DataFrame:
         return pd.read_sql(sql, conn)
 
 # ==============================
-# Validate connection
+# 🔍 Triple validation (stop early if broken)
 # ==============================
 try:
     _ = run_sql("SELECT 1")
-    st.sidebar.success("✅ Connected to Athena successfully.")
+    st.sidebar.success("✅ Basic Athena connectivity works.")
 except Exception as e:
-    st.sidebar.error(f"❌ Athena connection failed: {e}")
+    st.sidebar.error(f"❌ Failed SELECT 1: {e}")
     st.stop()
 
-# ==============================
-# Debug check (remove later)
-# ==============================
 try:
-    debug_df = run_sql("SELECT COUNT(*) AS rowcount FROM gold_media_daily_trend_30d")
-    st.sidebar.info(f"🔍 gold_media_daily_trend_30d rowcount: {debug_df.iloc[0]['rowcount']}")
+    tables_df = run_sql("SHOW TABLES")
+    st.sidebar.success(f"✅ Tables found: {len(tables_df)}")
+    st.sidebar.write(tables_df.head())
 except Exception as e:
-    st.sidebar.error(f"❌ Debug query failed: {e}")
+    st.sidebar.error(f"❌ SHOW TABLES failed: {e}")
+    st.stop()
+
+try:
+    rowcount_df = run_sql("SELECT COUNT(*) AS n FROM gold_media_daily_trend_30d")
+    st.sidebar.success(f"✅ gold_media_daily_trend_30d rows: {rowcount_df.iloc[0]['n']}")
+except Exception as e:
+    st.sidebar.error(f"❌ Rowcount query failed: {e}")
+    st.stop()
 
 # ==============================
 # SQL helpers
@@ -252,15 +258,5 @@ with t2:
         st.info("No visitor trend data.")
     else:
         st.line_chart(visitor_trend.set_index("d")["plays"], use_container_width=True)
-
-# ==============================
-# Debug check (remove later if desired)
-# ==============================
-try:
-    debug_df = run_sql("SELECT COUNT(*) AS rowcount FROM gold_media_daily_trend_30d")
-    st.sidebar.info(f"🔍 gold_media_daily_trend_30d rowcount: {debug_df.iloc[0]['rowcount']}")
-except Exception as e:
-    st.sidebar.error(f"❌ Debug query failed: {e}")
-
 
 st.success("✅ Dashboard loaded successfully.")
