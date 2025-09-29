@@ -8,33 +8,33 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine
 
-# -------------------------------
+# ==============================
 # Page config
-# -------------------------------
+# ==============================
 st.set_page_config(page_title="Wistia Video Analytics — Gold KPIs", layout="wide")
 st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
 
-# -------------------------------
-# Secrets (Streamlit Cloud)
-# -------------------------------
-AWS_KEY     = st.secrets["default"]["aws_access_key_id"]
-AWS_SECRET  = st.secrets["default"]["aws_secret_access_key"]
-REGION      = st.secrets["default"]["region_name"]
+# ==============================
+# Secrets from Streamlit Cloud
+# ==============================
+AWS_KEY    = st.secrets["default"]["aws_access_key_id"]
+AWS_SECRET = st.secrets["default"]["aws_secret_access_key"]
+REGION     = st.secrets["default"]["region_name"]
 
-DB          = st.secrets["athena"]["database"]
-WORKGROUP   = st.secrets["athena"]["workgroup"]
-S3_STAGING  = st.secrets["athena"]["s3_staging_dir"]
+DB         = st.secrets["athena"]["database"]
+WORKGROUP  = st.secrets["athena"]["workgroup"]
+S3_STAGING = st.secrets["athena"]["s3_staging_dir"]
 
-# URL-encode sensitive parts used inside the connection URL
+# URL-encode for SQLAlchemy URL safety
 _aws_key_enc    = quote_plus(AWS_KEY)
 _aws_secret_enc = quote_plus(AWS_SECRET)
 _s3_enc         = quote_plus(S3_STAGING)
 _wg_enc         = quote_plus(WORKGROUP)
 
-# -------------------------------
-# Athena SQLAlchemy engine
-# -------------------------------
+# ==============================
+# Athena engine (SQLAlchemy)
+# ==============================
 @st.cache_resource(show_spinner=False)
 def get_engine():
     conn_str = (
@@ -42,7 +42,7 @@ def get_engine():
         f"@athena.{REGION}.amazonaws.com:443/{DB}"
         f"?s3_staging_dir={_s3_enc}&work_group={_wg_enc}"
     )
-    # poll_interval=1 speeds up GET query status polling
+    # poll_interval speeds up status polling
     return create_engine(conn_str, connect_args={"poll_interval": 1})
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -50,9 +50,9 @@ def run_sql(sql: str) -> pd.DataFrame:
     with get_engine().connect() as conn:
         return pd.read_sql(sql, conn)
 
-# -------------------------------
-# Validate connection (runs once)
-# -------------------------------
+# ==============================
+# Validate the connection once
+# ==============================
 try:
     _ = run_sql("SELECT 1")
     st.sidebar.success("✅ Connected to Athena successfully.")
@@ -60,9 +60,9 @@ except Exception as e:
     st.sidebar.error(f"❌ Athena connection failed: {e}")
     st.stop()
 
-# -------------------------------
+# ==============================
 # SQL helpers
-# -------------------------------
+# ==============================
 def sql_date_literal(d: date) -> str:
     return f"DATE '{d.isoformat()}'"
 
@@ -73,8 +73,7 @@ def sql_list(values: List[str]) -> str:
     for v in values:
         if v is None:
             continue
-        safe_v = str(v).replace("'", "''")
-        quoted.append(f"'{safe_v}'")
+        quoted.append("'" + str(v).replace("'", "''") + "'")
     return ", ".join(quoted) if quoted else "''"
 
 def where_clause_for_media_dates(start: date, end: date, media_ids: Optional[List[str]]) -> str:
@@ -86,9 +85,9 @@ def where_clause_for_media_dates(start: date, end: date, media_ids: Optional[Lis
 def where_clause_for_dates_only(start: date, end: date) -> str:
     return f"WHERE d BETWEEN {sql_date_literal(start)} AND {sql_date_literal(end)}"
 
-# -------------------------------
+# ==============================
 # Sidebar filters
-# -------------------------------
+# ==============================
 with st.sidebar:
     st.header("🔧 Filters")
     today = date.today()
@@ -125,9 +124,9 @@ with st.sidebar:
         default=media_options,
     )
 
-# -------------------------------
+# ==============================
 # Queries
-# -------------------------------
+# ==============================
 summary_sql = f"""
 SELECT
     SUM(plays) AS total_plays,
@@ -193,16 +192,16 @@ ORDER BY d
 """
 visitor_trend = run_sql(visitor_trend_sql)
 
-# -------------------------------
+# ==============================
 # Layout
-# -------------------------------
+# ==============================
 st.markdown("### 📌 Executive Summary")
 c1, c2, c3, c4 = st.columns(4)
 
-total_plays = int(summary_df.get("total_plays", pd.Series([0])).iloc[0] or 0)
-unique_visitors = int(vis_df.get("unique_visitors", pd.Series([0])).iloc[0] or 0)
-avg_play_rate = float(summary_df.get("avg_play_rate_pct", pd.Series([0.0])).iloc[0] or 0.0)
-inter_per_play = float(vis_df.get("interactions_per_play", pd.Series([0.0])).iloc[0] or 0.0)
+total_plays     = int(summary_df.get("total_plays",            pd.Series([0])).iloc[0] or 0)
+unique_visitors = int(vis_df.get("unique_visitors",            pd.Series([0])).iloc[0] or 0)
+avg_play_rate   = float(summary_df.get("avg_play_rate_pct",    pd.Series([0.0])).iloc[0] or 0.0)
+inter_per_play  = float(vis_df.get("interactions_per_play",    pd.Series([0.0])).iloc[0] or 0.0)
 
 c1.metric("Total Plays", f"{total_plays:,}")
 c2.metric("Unique Visitors", f"{unique_visitors:,}")
