@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import List, Optional
 import pandas as pd
 import streamlit as st
+import boto3
 from sqlalchemy import create_engine
 
 # ==============================
@@ -14,12 +15,18 @@ st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
 
 # ==============================
-# Load secrets
+# AWS Session from secrets
 # ==============================
+session = boto3.Session(
+    aws_access_key_id=st.secrets["aws"]["aws_access_key_id"],
+    aws_secret_access_key=st.secrets["aws"]["aws_secret_access_key"],
+    region_name=st.secrets["aws"]["region_name"]
+)
+
 DB         = st.secrets["athena"]["database"]
 WORKGROUP  = st.secrets["athena"]["workgroup"]
 S3_STAGING = st.secrets["athena"]["s3_staging_dir"]
-REGION     = st.secrets["aws"]["region_name"]
+REGION     = session.region_name
 
 # ==============================
 # Athena engine (SQLAlchemy)
@@ -27,18 +34,12 @@ REGION     = st.secrets["aws"]["region_name"]
 @st.cache_resource(show_spinner=False)
 def get_engine():
     conn_str = (
-        f"awsathena+rest://{st.secrets['aws']['aws_access_key_id']}:{st.secrets['aws']['aws_secret_access_key']}@"
-        f"athena.{REGION}.amazonaws.com:443/{DB}"
+        f"awsathena+rest://@athena.{REGION}.amazonaws.com:443/{DB}"
         f"?s3_staging_dir={S3_STAGING}&work_group={WORKGROUP}"
     )
     return create_engine(
         conn_str,
-        connect_args={
-            "aws_access_key_id": st.secrets["aws"]["aws_access_key_id"],
-            "aws_secret_access_key": st.secrets["aws"]["aws_secret_access_key"],
-            "region_name": REGION,
-            "poll_interval": 1
-        }
+        connect_args={"s3_session": session, "poll_interval": 1}
     )
 
 @st.cache_data(ttl=180, show_spinner=False)
