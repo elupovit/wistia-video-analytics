@@ -1,12 +1,12 @@
 # streamlit_app/app.py
-
 from datetime import date, timedelta
 from typing import List, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus  # still used for safety with S3 path
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine
+import boto3
 
 # ==============================
 # Page config
@@ -16,7 +16,17 @@ st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
 
 # ==============================
-# Secrets from Streamlit Cloud
+# Secrets (Streamlit Cloud)
+# Expected in Streamlit Secrets UI:
+# [aws]
+# aws_access_key_id     = "AKIA...."
+# aws_secret_access_key = "...."
+# region                = "us-east-1"
+#
+# [athena]
+# database      = "wistia-analytics-gold"
+# workgroup     = "primary"
+# s3_staging_dir= "s3://your-athena-results-bucket/prefix/"
 # ==============================
 AWS_KEY    = st.secrets["aws"]["aws_access_key_id"]
 AWS_SECRET = st.secrets["aws"]["aws_secret_access_key"]
@@ -26,23 +36,37 @@ DB         = st.secrets["athena"]["database"]
 WORKGROUP  = st.secrets["athena"]["workgroup"]
 S3_STAGING = st.secrets["athena"]["s3_staging_dir"]
 
-# URL-encode for SQLAlchemy URL safety
-_aws_key_enc    = quote_plus(AWS_KEY)
-_aws_secret_enc = quote_plus(AWS_SECRET)
-_s3_enc         = quote_plus(S3_STAGING)
-_wg_enc         = quote_plus(WORKGROUP)
+# Normalize S3 path (Athena needs the trailing slash)
+if not S3_STAGING.endswith("/"):
+    S3_STAGING = S3_STAGING + "/"
+
+# URL-encode only the S3 path we put in the URL
+_s3_enc = quote_plus(S3_STAGING)
+_wg_enc = quote_plus(WORKGROUP)
 
 # ==============================
-# Athena engine (SQLAlchemy)
+# Athena engine (PyAthena + SQLAlchemy) via boto3 Session
 # ==============================
 @st.cache_resource(show_spinner=False)
 def get_engine():
-    conn_str = (
-        f"awsathena+rest://{_aws_key_enc}:{_aws_secret_enc}"
-        f"@athena.{REGION}.amazonaws.com:443/{DB}"
+    # Build a dedicated boto3 session using the keys from Streamlit secrets
+    session = boto3.Session(
+        aws_access_key_id=AWS_KEY,
+        aws_secret_access_key=AWS_SECRET,
+        region_name=REGION,
+    )
+
+    # IMPORTANT: do NOT embed creds in the URL. Let PyAthena pick them from boto3.
+    conn_url = (
+        f"awsathena+rest://athena.{REGION}.amazonaws.com:443/{DB}"
         f"?s3_staging_dir={_s3_enc}&work_group={_wg_enc}"
     )
-    return create_engine(conn_str, connect_args={"poll_interval": 1})
+
+    # Hand the session to PyAthena; also tighten polling
+    return create_engine(
+        conn_url,
+        connect_args={"boto3_session": session, "poll_interval": 1},
+    )
 
 @st.cache_data(ttl=180, show_spinner=False)
 def run_sql(sql: str) -> pd.DataFrame:
@@ -197,10 +221,10 @@ visitor_trend = run_sql(visitor_trend_sql)
 st.markdown("### 📌 Executive Summary")
 c1, c2, c3, c4 = st.columns(4)
 
-total_plays     = int(summary_df.get("total_plays",            pd.Series([0])).iloc[0] or 0)
-unique_visitors = int(vis_df.get("unique_visitors",            pd.Series([0])).iloc[0] or 0)
-avg_play_rate   = float(summary_df.get("avg_play_rate_pct",    pd.Series([0.0])).iloc[0] or 0.0)
-inter_per_play  = float(vis_df.get("interactions_per_play",    pd.Series([0.0])).iloc[0] or 0.0)
+total_plays     = int(summary_df.get("total_plays",         pd.Series([0])).iloc[0] or 0)
+unique_visitors = int(vis_df.get("unique_visitors",         pd.Series([0])).iloc[0] or 0)
+avg_play_rate   = float(summary_df.get("avg_play_rate_pct", pd.Series([0.0])).iloc[0] or 0.0)
+inter_per_play  = float(vis_df.get("interactions_per_play", pd.Series([0.0])).iloc[0] or 0.0)
 
 c1.metric("Total Plays", f"{total_plays:,}")
 c2.metric("Unique Visitors", f"{unique_visitors:,}")
