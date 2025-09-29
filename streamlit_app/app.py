@@ -1,256 +1,232 @@
 # streamlit_app/app.py
-
+import os
 from datetime import date, timedelta
-from typing import List, Optional
-import pandas as pd
+
 import streamlit as st
+import pandas as pd
 import boto3
-from sqlalchemy import create_engine
 
 # ==============================
 # Page config
 # ==============================
 st.set_page_config(page_title="Wistia Video Analytics — Gold KPIs", layout="wide")
-st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
-st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
+st.title("📊 Wistia Video Analytics — Gold KPIs from S3 Parquet")
+st.caption("Data source: Gold Parquet files in S3 (no Athena)")
 
 # ==============================
-# AWS Session from secrets
+# AWS session from Streamlit secrets
 # ==============================
+AWS_SECRETS = st.secrets["aws"]
 session = boto3.Session(
-    aws_access_key_id=st.secrets["aws"]["aws_access_key_id"],
-    aws_secret_access_key=st.secrets["aws"]["aws_secret_access_key"],
-    region_name=st.secrets["aws"]["region_name"]
+    aws_access_key_id=AWS_SECRETS["aws_access_key_id"],
+    aws_secret_access_key=AWS_SECRETS["aws_secret_access_key"],
+    region_name=AWS_SECRETS.get("region_name", "us-east-1"),
 )
-
-DB         = st.secrets["athena"]["database"]
-WORKGROUP  = st.secrets["athena"]["workgroup"]
-S3_STAGING = st.secrets["athena"]["s3_staging_dir"]
-REGION     = session.region_name
+s3 = session.client("s3")
 
 # ==============================
-# Athena engine (SQLAlchemy)
+# S3 locations (bucket + prefixes)
 # ==============================
-@st.cache_resource(show_spinner=False)
-def get_engine():
-    conn_str = (
-        f"awsathena+rest://@athena.{REGION}.amazonaws.com:443/{DB}"
-        f"?s3_staging_dir={S3_STAGING}&work_group={WORKGROUP}"
-    )
-    return create_engine(
-        conn_str,
-        connect_args={"s3_session": session, "poll_interval": 1}
-    )
-
-@st.cache_data(ttl=180, show_spinner=False)
-def run_sql(sql: str) -> pd.DataFrame:
-    with get_engine().connect() as conn:
-        return pd.read_sql(sql, conn)
+BUCKET = st.secrets.get("s3", {}).get("bucket", "wistia-video-analytics")
+GOLD_ROOT = st.secrets.get("s3", {}).get("gold_prefix", "gold")
+DATASETS = {
+    "media": f"{GOLD_ROOT}/agg_media_daily_p",
+    "visitor": f"{GOLD_ROOT}/agg_visitor_daily_p",
+}
 
 # ==============================
-# Validate connection
+# Helpers for partition discovery
 # ==============================
-try:
-    _ = run_sql("SELECT 1")
-    st.sidebar.success("✅ Connected to Athena successfully.")
-except Exception as e:
-    st.sidebar.error(f"❌ Athena connection failed: {e}")
-    st.stop()
+def _ls_prefix(prefix: str):
+    paginator = s3.get_paginator("list_objects_v2")
+    pages = paginator.paginate(Bucket=BUCKET, Prefix=prefix, Delimiter="/")
+    prefixes, objects = [], []
+    for page in pages:
+        for cp in page.get("CommonPrefixes", []):
+            prefixes.append(cp["Prefix"])
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.endswith("$folder$"):
+                continue
+            objects.append(obj)
+    return prefixes, objects
+
+def _parse_partition_triplet(year_p: str, month_p: str, day_p: str) -> date:
+    y = int(year_p.strip("/").split("=")[1])
+    m = int(month_p.strip("/").split("=")[1])
+    d = int(day_p.strip("/").split("=")[1])
+    return date(y, m, d)
+
+@st.cache_data(ttl=300)
+def list_available_partition_dates(dataset_prefix: str):
+    dates = []
+    years, _ = _ls_prefix(f"{dataset_prefix}/")
+    for y in years:
+        months, _ = _ls_prefix(y)
+        for m in months:
+            days, _ = _ls_prefix(m)
+            for d in days:
+                try:
+                    dates.append(_parse_partition_triplet(y, m, d))
+                except Exception:
+                    pass
+    return sorted(set(dates))
+
+@st.cache_data(ttl=300)
+def list_parquet_keys_for_date(dataset_prefix: str, the_date: date):
+    y = f"year={the_date.year}/"
+    m = f"month={the_date.month}/"
+    d = f"day={the_date.day}/"
+    partition_prefix = f"{dataset_prefix}/{y}{m}{d}"
+    _, objects = _ls_prefix(partition_prefix)
+    return [o["Key"] for o in objects if o["Key"].endswith(".parquet")]
 
 # ==============================
-# Debug check (remove later)
+# Loading parquet
 # ==============================
-try:
-    debug_df = run_sql("SELECT COUNT(*) AS rowcount FROM gold_media_daily_trend_30d")
-    st.sidebar.info(f"🔍 gold_media_daily_trend_30d rowcount: {debug_df.iloc[0]['rowcount']}")
-except Exception as e:
-    st.sidebar.error(f"❌ Debug query failed: {e}")
+def _read_parquet_via_boto(keys):
+    frames = []
+    for key in keys:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+        df = pd.read_parquet(obj["Body"])
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-# ==============================
-# SQL helpers
-# ==============================
-def sql_date_literal(d: date) -> str:
-    return f"DATE '{d.isoformat()}'"
+def _read_parquet_via_s3fs(paths):
+    import s3fs  # optional
+    return pd.read_parquet(paths)
 
-def sql_list(values: List[str]) -> str:
-    if not values:
-        return "''"
-    quoted = []
-    for v in values:
-        if v is None:
-            continue
-        quoted.append("'" + str(v).replace("'", "''") + "'")
-    return ", ".join(quoted) if quoted else "''"
+@st.cache_data(ttl=300)
+def load_dataset(dataset_key: str, start: date, end: date, scope: str):
+    dataset_prefix = DATASETS[dataset_key]
+    available = list_available_partition_dates(dataset_prefix)
+    if not available:
+        return pd.DataFrame(), available
 
-def where_clause_for_media_dates(start: date, end: date, media_ids: Optional[List[str]]) -> str:
-    clause = f"d BETWEEN {sql_date_literal(start)} AND {sql_date_literal(end)}"
-    if media_ids:
-        clause += f" AND media_id IN ({sql_list(media_ids)})"
-    return "WHERE " + clause
+    if scope == "latest":
+        selected_dates = [max(available)]
+    else:
+        selected_dates = [d for d in available if start <= d <= end] or [max(available)]
 
-def where_clause_for_dates_only(start: date, end: date) -> str:
-    return f"WHERE d BETWEEN {sql_date_literal(start)} AND {sql_date_literal(end)}"
+    keys = []
+    for d in selected_dates:
+        keys.extend(list_parquet_keys_for_date(dataset_prefix, d))
+
+    s3_urls = [f"s3://{BUCKET}/{k}" for k in keys]
+    try:
+        df = _read_parquet_via_s3fs(s3_urls)
+    except Exception:
+        df = _read_parquet_via_boto(keys)
+
+    if "d" in df.columns:
+        df["d"] = pd.to_datetime(df["d"]).dt.date
+    for col in ["loads", "plays", "unique_visitors", "seconds_watched"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    return df, available
 
 # ==============================
 # Sidebar filters
 # ==============================
 with st.sidebar:
     st.header("🔧 Filters")
+    scope = st.radio("Load", options=["Date range", "Latest day"], index=0, horizontal=True)
     today = date.today()
     default_start = today - timedelta(days=30)
 
-    dr = st.date_input(
-        "Date Range",
-        value=(default_start, today),
-        min_value=today - timedelta(days=365),
-        max_value=today,
-        help="Filters use the `d` column in the daily trend views."
-    )
-
-    if isinstance(dr, (list, tuple)) and len(dr) == 2:
-        start_date, end_date = dr
+    if scope == "Date range":
+        dr = st.date_input("Date range", value=(default_start, today))
+        if isinstance(dr, tuple):
+            start_date, end_date = dr
+        else:
+            start_date, end_date = dr, dr
     else:
-        start_date, end_date = default_start, today
-
-    if start_date > end_date:
-        start_date, end_date = end_date, end_date
-
-    media_opt_sql = f"""
-        SELECT DISTINCT media_id
-        FROM gold_media_daily_trend_30d
-        {where_clause_for_dates_only(start_date, end_date)}
-        ORDER BY media_id
-    """
-    media_options_df = run_sql(media_opt_sql)
-    media_options = media_options_df["media_id"].dropna().astype(str).tolist()
-
-    selected_media = st.multiselect(
-        "Select Media (media_id)",
-        options=media_options,
-        default=media_options,
-    )
+        start_date, end_date = today, today
 
 # ==============================
-# Queries
+# Load datasets
 # ==============================
-summary_sql = f"""
-SELECT
-    SUM(plays) AS total_plays,
-    SUM(loads) AS total_loads,
-    ROUND(100.0 * SUM(plays) / NULLIF(SUM(loads), 0), 2) AS avg_play_rate_pct
-FROM gold_media_daily_trend_30d
-{where_clause_for_media_dates(start_date, end_date, selected_media)}
-"""
-summary_df = run_sql(summary_sql)
+with st.spinner("Loading gold data from S3..."):
+    media_df, _ = load_dataset("media", start_date, end_date, "latest" if scope == "Latest day" else "range")
+    visitor_df, _ = load_dataset("visitor", start_date, end_date, "latest" if scope == "Latest day" else "range")
 
-visitors_sql = f"""
-SELECT
-    COUNT(DISTINCT visitor_id) AS unique_visitors,
-    SUM(interactions) AS total_interactions,
-    ROUND(1.0 * SUM(interactions) / NULLIF(SUM(plays), 0), 2) AS interactions_per_play
-FROM gold_visitor_daily_trend_30d
-{where_clause_for_dates_only(start_date, end_date)}
-"""
-vis_df = run_sql(visitors_sql)
+if media_df.empty and visitor_df.empty:
+    st.warning("No data found in the selected range.")
+    st.stop()
 
-media_leader_sql = f"""
-SELECT
-    media_id,
-    COALESCE(media_title, '') AS media_title,
-    SUM(plays) AS plays,
-    SUM(loads) AS loads,
-    ROUND(100.0 * SUM(plays) / NULLIF(SUM(loads), 0), 2) AS play_rate_pct
-FROM gold_media_daily_trend_30d
-{where_clause_for_media_dates(start_date, end_date, selected_media)}
-GROUP BY media_id, media_title
-ORDER BY plays DESC
-"""
-media_kpis = run_sql(media_leader_sql)
-
-top_visitors_sql = f"""
-SELECT
-    COALESCE(visitor_email, 'Unknown') AS visitor_email,
-    COALESCE(visitor_org_name, 'Unknown') AS visitor_org_name,
-    SUM(plays) AS plays
-FROM gold_visitor_daily_trend_30d
-{where_clause_for_dates_only(start_date, end_date)}
-GROUP BY visitor_email, visitor_org_name
-ORDER BY plays DESC
-LIMIT 10
-"""
-visitor_kpis = run_sql(top_visitors_sql)
-
-media_trend_sql = f"""
-SELECT d, SUM(plays) AS plays
-FROM gold_media_daily_trend_30d
-{where_clause_for_media_dates(start_date, end_date, selected_media)}
-GROUP BY d
-ORDER BY d
-"""
-media_trend = run_sql(media_trend_sql)
-
-visitor_trend_sql = f"""
-SELECT d, SUM(plays) AS plays
-FROM gold_visitor_daily_trend_30d
-{where_clause_for_dates_only(start_date, end_date)}
-GROUP BY d
-ORDER BY d
-"""
-visitor_trend = run_sql(visitor_trend_sql)
+# Media filter
+with st.sidebar:
+    if "media_id" in media_df.columns:
+        media_options = sorted(pd.Series(media_df["media_id"].dropna().unique()).astype(str).tolist())
+        selected_media = st.multiselect("Select Media", options=media_options, default=media_options[: min(15, len(media_options))])
+        if selected_media:
+            media_df = media_df[media_df["media_id"].astype(str).isin(selected_media)]
 
 # ==============================
-# Layout
+# KPIs
 # ==============================
-st.markdown("### 📌 Executive Summary")
+def _safe_sum(df, col):
+    return int(df[col].sum()) if col in df.columns else 0
+
+summary_mask = pd.Series([True] * len(media_df))
+if "d" in media_df.columns and scope == "Date range":
+    summary_mask &= (media_df["d"] >= start_date) & (media_df["d"] <= end_date)
+summary_df = media_df[summary_mask].copy()
+
+total_plays = _safe_sum(summary_df, "plays")
+total_loads = _safe_sum(summary_df, "loads")
+total_watch_time = _safe_sum(summary_df, "seconds_watched")
+avg_play_rate = round(100 * total_plays / total_loads, 2) if total_loads else 0.0
+
 c1, c2, c3, c4 = st.columns(4)
-
-total_plays     = int(summary_df.get("total_plays",            pd.Series([0])).iloc[0] or 0)
-unique_visitors = int(vis_df.get("unique_visitors",            pd.Series([0])).iloc[0] or 0)
-avg_play_rate   = float(summary_df.get("avg_play_rate_pct",    pd.Series([0.0])).iloc[0] or 0.0)
-inter_per_play  = float(vis_df.get("interactions_per_play",    pd.Series([0.0])).iloc[0] or 0.0)
-
 c1.metric("Total Plays", f"{total_plays:,}")
-c2.metric("Unique Visitors", f"{unique_visitors:,}")
+c2.metric("Total Loads", f"{total_loads:,}")
 c3.metric("Avg Play Rate", f"{avg_play_rate:.2f}%")
-c4.metric("Interactions per Play", f"{inter_per_play:.2f}")
+c4.metric("Total Watch Time (sec)", f"{total_watch_time:,}")
 
-st.markdown("### 🎯 Engagement KPIs (by Media)")
-left, right = st.columns([1.4, 1.0])
+# ==============================
+# Media KPIs
+# ==============================
+st.subheader("🎬 Media KPIs")
+if {"media_id", "plays", "loads"}.issubset(set(media_df.columns)):
+    media_kpis = (
+        media_df.groupby("media_id", as_index=False)[["plays", "loads", "seconds_watched"]].sum()
+        .assign(play_rate=lambda d: (100 * d["plays"] / d["loads"]).round(2).fillna(0))
+        .sort_values("plays", ascending=False)
+    )
+    st.dataframe(media_kpis, use_container_width=True)
+else:
+    st.info("Missing expected columns for Media KPIs.")
 
-with left:
-    if media_kpis.empty:
-        st.info("No media rows in the selected range/filters.")
-    else:
-        st.dataframe(
-            media_kpis[["media_title", "media_id", "plays", "loads", "play_rate_pct"]],
-            use_container_width=True,
-        )
+# ==============================
+# Top visitors
+# ==============================
+st.subheader("🧑‍💻 Top Visitors")
+if {"visitor_id", "plays"}.issubset(set(visitor_df.columns)):
+    top_visitors = (
+        visitor_df.groupby("visitor_id", as_index=False)[["plays", "seconds_watched"]].sum()
+        .sort_values("plays", ascending=False)
+        .head(25)
+    )
+    st.dataframe(top_visitors, use_container_width=True)
+else:
+    st.info("Missing expected columns for Top Visitors.")
 
-with right:
-    if visitor_kpis.empty:
-        st.info("No visitor rows in the selected range.")
-    else:
-        st.markdown("**Top Visitors (by plays)**")
-        st.dataframe(
-            visitor_kpis[["visitor_email", "visitor_org_name", "plays"]],
-            use_container_width=True,
-        )
+# ==============================
+# Trends
+# ==============================
+st.subheader("📈 Trends")
+if {"d", "plays"}.issubset(set(media_df.columns)):
+    trend = media_df.groupby("d", as_index=False)[["plays", "seconds_watched"]].sum().sort_values("d")
+    st.line_chart(trend.set_index("d"))
+else:
+    st.info("Missing expected columns for Trends.")
 
-st.markdown("### 📈 Engagement Trends (last selected window)")
-t1, t2 = st.columns(2)
-
-with t1:
-    st.markdown("**Media Plays Trend**")
-    if media_trend.empty:
-        st.info("No media trend data.")
-    else:
-        st.line_chart(media_trend.set_index("d")["plays"], use_container_width=True)
-
-with t2:
-    st.markdown("**Visitor Plays Trend**")
-    if visitor_trend.empty:
-        st.info("No visitor trend data.")
-    else:
-        st.line_chart(visitor_trend.set_index("d")["plays"], use_container_width=True)
-
-st.success("✅ Dashboard loaded successfully.")
+# ==============================
+# Raw data
+# ==============================
+with st.expander("Peek media_df"):
+    st.write(media_df.head(50))
+with st.expander("Peek visitor_df"):
+    st.write(visitor_df.head(50))
