@@ -6,3 +6,4 @@ pyarrow==17.0.0
 altair==5.4.1
 pyathena==3.0.10
 sqlalchemy==2.0.34
+sqlalchemy-athena==1.2.4
