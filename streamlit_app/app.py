@@ -16,11 +16,11 @@ st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
 
 # ==============================
-# AWS Session (use secrets.toml)
+# AWS Session (from Streamlit secrets)
 # ==============================
 session = boto3.Session(
-    aws_access_key_id=st.secrets["aws"]["aws_access_key_id"],
-    aws_secret_access_key=st.secrets["aws"]["aws_secret_access_key"],
+    aws_access_key_id=st.secrets["aws"]["access_key_id"],
+    aws_secret_access_key=st.secrets["aws"]["secret_access_key"],
     region_name=st.secrets["aws"]["region_name"]
 )
 
