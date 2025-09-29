@@ -16,9 +16,22 @@ st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
 
 # ==============================
-# AWS Session (use profile, not raw keys)
+# AWS Session (local vs Streamlit)
 # ==============================
-session = boto3.Session(profile_name="wistia-dev")
+def get_boto3_session():
+    """Return a boto3 session (local = profile, cloud = secrets)."""
+    try:
+        # Local development
+        return boto3.Session(profile_name="wistia-dev")
+    except Exception:
+        # Streamlit Cloud
+        return boto3.Session(
+            aws_access_key_id=st.secrets["aws"]["aws_access_key_id"],
+            aws_secret_access_key=st.secrets["aws"]["aws_secret_access_key"],
+            region_name=st.secrets["aws"]["region_name"],
+        )
+
+session = get_boto3_session()
 
 DB         = st.secrets["athena"]["database"]
 WORKGROUP  = st.secrets["athena"]["workgroup"]
