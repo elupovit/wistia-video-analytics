@@ -245,4 +245,14 @@ with t2:
     else:
         st.line_chart(visitor_trend.set_index("d")["plays"], use_container_width=True)
 
+# ==============================
+# Debug check (remove later if desired)
+# ==============================
+try:
+    debug_df = run_sql("SELECT COUNT(*) AS rowcount FROM gold_media_daily_trend_30d")
+    st.sidebar.info(f"🔍 gold_media_daily_trend_30d rowcount: {debug_df.iloc[0]['rowcount']}")
+except Exception as e:
+    st.sidebar.error(f"❌ Debug query failed: {e}")
+
+
 st.success("✅ Dashboard loaded successfully.")
