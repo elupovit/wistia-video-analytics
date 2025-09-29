@@ -16,25 +16,18 @@ st.title("📊 Wistia Video Analytics — Gold KPIs from Athena")
 st.caption("Data source: Athena / Glue Data Catalog ➜ **wistia-analytics-gold**")
 
 # ==============================
-# AWS Session (local vs Streamlit)
+# AWS Session (use secrets.toml)
 # ==============================
 session = boto3.Session(
     aws_access_key_id=st.secrets["aws"]["aws_access_key_id"],
     aws_secret_access_key=st.secrets["aws"]["aws_secret_access_key"],
-    region_name=st.secrets["aws"]["region"]
+    region_name=st.secrets["aws"]["region_name"]
 )
 
 DB         = st.secrets["athena"]["database"]
 WORKGROUP  = st.secrets["athena"]["workgroup"]
 S3_STAGING = st.secrets["athena"]["s3_staging_dir"]
-REGION     = st.secrets["aws"]["region"]
-
-session = get_boto3_session()
-
-DB         = st.secrets["athena"]["database"]
-WORKGROUP  = st.secrets["athena"]["workgroup"]
-S3_STAGING = st.secrets["athena"]["s3_staging_dir"]
-REGION     = session.region_name
+REGION     = st.secrets["aws"]["region_name"]
 
 # ==============================
 # Athena engine (SQLAlchemy)
