@@ -17,7 +17,6 @@ st.caption("Data source: Gold Parquet files in S3 (no Athena)")
 # ==============================
 # Secrets / config
 # ==============================
-AWS = st.secrets["aws"]
 S3CFG = st.secrets["s3"]
 
 BUCKET = S3CFG["bucket"]
