@@ -24,9 +24,9 @@ BUCKET = S3CFG["bucket"]
 MEDIA_PREFIX = S3CFG["media_prefix"].rstrip("/") + "/"
 VISITOR_PREFIX = S3CFG["visitor_prefix"].rstrip("/") + "/"
 
-AWS_KEY = AWS["aws_access_key_id"]
-AWS_SECRET = AWS["aws_secret_access_key"]
-AWS_REGION = AWS.get("region_name", "us-east-1")
+AWS_KEY = st.secrets.aws_credentials.AWS_ACCESS_KEY_ID
+AWS_SECRET = st.secrets.aws_credentials.AWS_SECRET_ACCESS_KEY
+AWS_REGION = st.secrets.aws_credentials.AWS_DEFAULT_REGION
 
 # boto3 session/clients (force our creds/region explicitly)
 session = boto3.Session(
