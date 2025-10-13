@@ -1,119 +1,147 @@
-# 🎥 Wistia Video Analytics – End-to-End Data Pipeline
+Wistia Video Analytics – End-to-End Data Pipeline
+Overview
 
-## 📌 Business Objective
-The marketing team uses Wistia to track video engagement across Facebook and YouTube.  
-This project builds a **production-grade data pipeline** that ingests video and visitor analytics, transforms them into a reporting-friendly structure, and surfaces insights via an interactive Streamlit dashboard.
+This project implements a production-grade data pipeline designed to extract, process, and analyze video engagement metrics from the Wistia Stats API. The system automates data ingestion, transformation, and reporting using AWS services and Python-based tooling.
 
-**Goals:**
-- Collect media-level and visitor-level analytics from the Wistia Stats API
-- Transform raw data into curated Gold tables using a medallion architecture
-- Enable business users to explore KPIs, top visitors, and engagement trends
-- Provide automated, maintainable CI/CD workflows for ongoing reliability
+The goal was to simulate a real-world data engineering environment—building a scalable, automated pipeline capable of handling daily ingestion and transformation workflows, while exposing final insights through an interactive dashboard.
 
----
+Business Objective
 
-## 🏗️ Architecture Overview
-**Pipeline Flow:**
+The marketing team uses Wistia to track video engagement across social channels such as Facebook and YouTube.
+This project provides a repeatable solution to:
 
-\`\`\`
-Wistia Stats API 
+Collect media-level and visitor-level analytics from Wistia’s Stats API
+
+Structure and transform raw data into analytics-ready formats
+
+Surface performance insights through an interactive Streamlit dashboard
+
+Implement CI/CD and version control practices for maintainability
+
+Architecture
+
+The system follows a three-layer medallion architecture to ensure clarity, data quality, and scalability.
+
+Wistia Stats API
     │
     ▼
-Bronze (Raw S3 Storage)
+Bronze (Raw Data in S3)
     │
     ▼
-Silver (Cleaned & Modeled via AWS Glue / PySpark)
+Silver (Cleaned and Structured Data via AWS Glue / PySpark)
     │
     ▼
-Gold (Aggregated Views in S3 → Athena)
+Gold (Aggregated Analytics Tables in S3)
     │
     ▼
 Streamlit Dashboard (KPIs, Filters, Charts)
-\`\`\`
 
-**Components:**
-- **Ingestion:** Python scripts for authenticated API pulls, pagination, and incremental loading.
-- **Storage:** Raw → Curated → Gold layers stored in Amazon S3.
-- **Transformations:** PySpark Glue jobs for schema validation and business logic.
-- **Query Layer:** Amazon Athena views (\`gold_media_daily_trend_30d\`, \`gold_visitor_daily_trend_30d\`).
-- **Presentation:** Streamlit app with filters for date range & media ID, plus KPIs and trend visualizations.
-- **CI/CD:** GitHub Actions pipeline for linting, testing, and auto-deployment to Streamlit Cloud.
+Core Components
+Layer	Technology	Purpose
+Ingestion	Python, Wistia API	Authenticated API pulls with pagination and incremental loading
+Storage	Amazon S3	Central data lake for Bronze, Silver, and Gold layers
+Transformation	AWS Glue (PySpark)	Schema enforcement, deduplication, and metric aggregation
+Automation	AWS Lambda, CloudWatch	Orchestration, scheduling, and monitoring of Glue jobs
+Visualization	Streamlit	Interactive dashboard for KPI and trend exploration
+Version Control	GitHub	CI/CD, branching, and deployment management
 
----
+Design Decisions
 
-## ⚖️ Key Decisions, Assumptions, and Tradeoffs
-- **Medallion Architecture (Bronze/Silver/Gold):** Chosen for clarity, modularity, and industry best practices.
-- **AWS Glue over dbt:** Aligned with project constraint (“no dbt”), PySpark chosen for scalability.
-- **Athena for querying:** Avoided standing compute costs while enabling fast SQL-based reporting.
-- **Streamlit for dashboarding:** Lightweight, Python-native, easy for iteration and presentation.
-- **CI/CD Simplification:** Dropped AWS SAM validation in CI/CD for faster closeout and smoother runs under deadline. (Can be added later.)
+Medallion architecture provides a clear separation between raw, cleaned, and aggregated datasets, supporting scalability and data lineage tracking.
 
----
+AWS Glue was chosen over dbt to comply with project requirements and leverage distributed PySpark transformations.
 
-## 🚀 Setup Instructions
+S3 serves as the data lake for durability and integration with Glue, Athena, and downstream analytics tools.
 
-### 1. Clone the Repository
-\`\`\`bash
+Streamlit was selected for visualization due to its rapid development cycle and native Python support.
+
+CI/CD is implemented with GitHub Actions for testing and deployment automation.
+
+Setup Instructions
+1. Clone the Repository
 git clone https://github.com/elupovit/wistia-video-analytics.git
 cd wistia-video-analytics
-\`\`\`
 
-### 2. Local Environment
-\`\`\`bash
-# (Recommended) create a virtual environment
+2. Set Up the Python Environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install ingestion dependencies
+# Install dependencies
 pip install -r ingestion/requirements.txt
-
-# Install Streamlit dependencies
 pip install -r streamlit_app/requirements.txt
-\`\`\`
 
-### 3. AWS Setup
-- Ensure your AWS account has:
-  - S3 buckets for bronze, silver, and gold layers
-  - Glue jobs configured with IAM roles for S3 + CloudWatch
-  - Athena enabled in the same region
+3. AWS Configuration
 
-- Deploy AWS resources (if using SAM):
-\`\`\`bash
+Before running the pipeline, ensure your AWS account includes:
+
+S3 buckets for Bronze, Silver, and Gold layers
+
+IAM roles granting Glue, Lambda, and CloudWatch access
+
+(Optional) Athena setup for ad-hoc SQL queries
+
+If deploying infrastructure with AWS SAM:
+
 sam build
 sam deploy --guided
-\`\`\`
 
-### 4. Run the Dashboard Locally
-\`\`\`bash
+4. Run the Dashboard Locally
 cd streamlit_app
 streamlit run app.py
-\`\`\`
 
-### 5. CI/CD
-- Every push to \`main\` triggers:
-  - Python lint/tests
-  - Auto-redeploy to Streamlit Cloud (if connected)
+5. CI/CD Workflow
 
----
+Each push to main runs linting, testing, and optional deployment to Streamlit Cloud.
 
-## 📊 Dashboard Features
-- **Filters:** Date range, media ID
-- **KPIs:** Plays, play rate, watch time, engagement %
-- **Charts:** 30-day media trends, visitor engagement
-- **Tables:** Top visitors by engagement
+Dashboard Overview
 
----
+The Streamlit dashboard presents metrics at both the media and visitor levels.
 
-## 📝 Evaluation Criteria (Met)
-- ✅ Designed modular ingestion → transformation → reporting system  
-- ✅ Implemented API auth, pagination, incremental ingestion  
-- ✅ Ran pipeline for multiple days with reliable data loads  
-- ✅ Delivered Streamlit dashboard for insights  
-- ✅ Implemented GitHub-based CI/CD  
-- ✅ Documented decisions, tradeoffs, and setup  
+Filters
 
----
+Date range
 
-## 👨‍💻 Author
-Built as part of a data engineering project simulating a real-world assignment.  
-Maintained by **Eitan Lupovitch**.
+Media ID
+
+KPIs
+
+Total Plays
+
+Total Loads
+
+Play Rate
+
+Total Watch Time
+
+Engagement Rate
+
+Visuals
+
+30-day engagement trends by media
+
+Top visitors ranked by engagement metrics
+
+The dashboard reads directly from Gold-layer Parquet data, ensuring consistency with the underlying AWS pipeline outputs.
+
+Evaluation Summary
+
+This project demonstrates the implementation of an end-to-end cloud data pipeline with automated ingestion, transformation, and reporting.
+
+Key Achievements
+
+Designed and implemented modular ingestion → transformation → reporting architecture
+
+Used authenticated API access, pagination, and incremental ingestion logic
+
+Ran the pipeline continuously in a production-style configuration
+
+Delivered an interactive, analytics-ready Streamlit dashboard
+
+Implemented version control and CI/CD for pipeline maintenance
+
+Documented all architectural and technical design decisions
+
+Author
+
+Developed by Eitan Lupovitch
+End-to-end data engineering project built to model a real-world analytics pipeline using AWS and Python.
